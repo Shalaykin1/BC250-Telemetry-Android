@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -273,11 +273,23 @@ private fun VrmTelemetryTable(
 }
 
 @Composable
-private fun VrmRow(label: String, value: String, current: Double, max: Double, valueColor: Color) {
+private fun VrmRow(
+    label: String,
+    value: String,
+    current: Double,
+    max: Double,
+    valueColor: Color,
+    stacked: Boolean = false,
+) {
     Column(Modifier.padding(vertical = 4.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        if (stacked) {
             Text(label, color = TextMuted, fontSize = 13.sp)
             Text(value, color = valueColor, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        } else {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(label, color = TextMuted, fontSize = 13.sp)
+                Text(value, color = valueColor, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            }
         }
         Spacer(Modifier.height(4.dp))
         MiniBar(current, max, valueColor)
@@ -331,6 +343,7 @@ private fun OtherSensorsCard(data: Telemetry, modifier: Modifier = Modifier.fill
                     avg,
                     100.0,
                     statusColor(avg, BoardThresh),
+                    stacked = true,
                 )
             }
         }
@@ -364,17 +377,16 @@ private fun MemoryCard(memory: MemoryTelemetry, modifier: Modifier = Modifier.fi
 
 @Composable
 private fun MemoryChipsGrid(memory: MemoryTelemetry) {
-    val designators = listOf("U27", "U29", "U31", "U33", "U43", "U41", "U39", "U37")
     Column {
         memory.chipsC.chunked(4).forEachIndexed { rowIndex, rowChips ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 rowChips.forEachIndexed { colIndex, chip ->
                     val idx = rowIndex * 4 + colIndex
                     val isHotspot = memory.hotspotChip == idx
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .aspectRatio(1f)
+                            .height(36.dp)
                             .background(
                                 if (isHotspot) Color(0xFF3A2A1A) else Color(0xFF1A2138),
                                 RoundedCornerShape(8.dp),
@@ -388,21 +400,25 @@ private fun MemoryChipsGrid(memory: MemoryTelemetry) {
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
-                                designators.getOrElse(idx) { "U?" },
+                                "Chip ${idx + 1}",
                                 color = TextMuted,
-                                fontSize = 9.sp,
+                                fontSize = 8.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Clip,
                             )
                             Text(
                                 chip?.let { "$it°" } ?: "—",
                                 color = chip?.let { statusColor(it.toDouble(), VrmThresh) } ?: TextMuted,
-                                fontSize = 13.sp,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Clip,
                             )
                         }
                     }
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
         }
     }
 }
