@@ -9,15 +9,14 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -127,17 +126,27 @@ private fun NotFoundScreen(onRetry: () -> Unit) {
 
 @Composable
 private fun TelemetryScreen(host: String, data: Telemetry) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+    // Fixed grid (no scrolling): header on top, CPU/GPU and sensors/memory split into two weighted rows.
+    Column(
+        modifier = Modifier.fillMaxSize().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        item { Header(host, data) }
-        item { CpuCard(data) }
-        item { GpuCard(data) }
-        item { OtherSensorsCard(data) }
-        if (data.memory.valid) {
-            item { MemoryCard(data.memory) }
+        Header(host, data)
+        Row(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            CpuCard(data, modifier = Modifier.weight(1f).fillMaxHeight())
+            GpuCard(data, modifier = Modifier.weight(1f).fillMaxHeight())
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OtherSensorsCard(data, modifier = Modifier.weight(1f).fillMaxHeight())
+            if (data.memory.valid) {
+                MemoryCard(data.memory, modifier = Modifier.weight(1f).fillMaxHeight())
+            }
         }
     }
 }
@@ -181,10 +190,9 @@ private fun LabeledValue(label: String, value: String, color: Color) {
 }
 
 @Composable
-private fun HudCard(content: @Composable () -> Unit) {
+private fun HudCard(modifier: Modifier = Modifier.fillMaxWidth(), content: @Composable () -> Unit) {
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .background(CardColor, RoundedCornerShape(16.dp))
             .border(1.dp, CardBorder, RoundedCornerShape(16.dp)),
     ) {
@@ -193,8 +201,8 @@ private fun HudCard(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun CpuCard(data: Telemetry) {
-    HudCard {
+private fun CpuCard(data: Telemetry, modifier: Modifier = Modifier.fillMaxWidth()) {
+    HudCard(modifier) {
         Column(Modifier.padding(16.dp)) {
             CardTitle("CPU CORE", AccentCpu)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -212,8 +220,8 @@ private fun CpuCard(data: Telemetry) {
 }
 
 @Composable
-private fun GpuCard(data: Telemetry) {
-    HudCard {
+private fun GpuCard(data: Telemetry, modifier: Modifier = Modifier.fillMaxWidth()) {
+    HudCard(modifier) {
         Column(Modifier.padding(16.dp)) {
             CardTitle("GPU CORE", AccentGpu)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -295,8 +303,8 @@ private fun MiniBar(value: Double, max: Double, color: Color) {
 }
 
 @Composable
-private fun OtherSensorsCard(data: Telemetry) {
-    HudCard {
+private fun OtherSensorsCard(data: Telemetry, modifier: Modifier = Modifier.fillMaxWidth()) {
+    HudCard(modifier) {
         Column(Modifier.padding(16.dp)) {
             CardTitle("OTHER SENSORS", TextMain)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -330,8 +338,8 @@ private fun OtherSensorsCard(data: Telemetry) {
 }
 
 @Composable
-private fun MemoryCard(memory: MemoryTelemetry) {
-    HudCard {
+private fun MemoryCard(memory: MemoryTelemetry, modifier: Modifier = Modifier.fillMaxWidth()) {
+    HudCard(modifier) {
         Column(Modifier.padding(16.dp)) {
             CardTitle("GDDR6 · MEMORY", AccentGpu)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -365,7 +373,8 @@ private fun MemoryChipsGrid(memory: MemoryTelemetry) {
                     val isHotspot = memory.hotspotChip == idx
                     Box(
                         modifier = Modifier
-                            .size(64.dp)
+                            .weight(1f)
+                            .aspectRatio(1f)
                             .background(
                                 if (isHotspot) Color(0xFF3A2A1A) else Color(0xFF1A2138),
                                 RoundedCornerShape(8.dp),
