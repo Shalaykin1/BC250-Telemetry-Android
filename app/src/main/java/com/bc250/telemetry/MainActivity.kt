@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -101,37 +102,41 @@ class MainActivity : ComponentActivity() {
                     } else {
                         var tapCount by remember { mutableStateOf(0) }
                         var lastTapAt by remember { mutableStateOf(0L) }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pointerInput(Unit) {
-                                    detectTapGestures(
-                                        onTap = {
-                                            val now = System.currentTimeMillis()
-                                            tapCount = if (now - lastTapAt <= TAP_SWITCH_WINDOW_MS) tapCount + 1 else 1
-                                            lastTapAt = now
-                                            if (tapCount >= TAP_SWITCH_COUNT) {
-                                                tapCount = 0
-                                                val next = if (displayMode == DisplayMode.ANDROID_UI) {
-                                                    DisplayMode.WEB_UI_V2
-                                                } else {
-                                                    DisplayMode.ANDROID_UI
-                                                }
-                                                selectDisplayMode(next)
-                                                Toast.makeText(
-                                                    context,
-                                                    if (next == DisplayMode.WEB_UI_V2) "WebUI V2" else "Android UI",
-                                                    Toast.LENGTH_SHORT,
-                                                ).show()
-                                            }
-                                        },
-                                    )
-                                },
-                        ) {
+                        Box(modifier = Modifier.fillMaxSize()) {
                             when (mode) {
                                 DisplayMode.ANDROID_UI -> HudScreen(viewModel)
                                 DisplayMode.WEB_UI_V2 -> WebUiScreen(viewModel)
                             }
+                            // WebView (WebUI mode) swallows touches itself, so the tap zone must be a
+                            // dedicated overlay drawn on top of it rather than a modifier on the ancestor.
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .size(64.dp)
+                                    .pointerInput(Unit) {
+                                        detectTapGestures(
+                                            onTap = {
+                                                val now = System.currentTimeMillis()
+                                                tapCount = if (now - lastTapAt <= TAP_SWITCH_WINDOW_MS) tapCount + 1 else 1
+                                                lastTapAt = now
+                                                if (tapCount >= TAP_SWITCH_COUNT) {
+                                                    tapCount = 0
+                                                    val next = if (displayMode == DisplayMode.ANDROID_UI) {
+                                                        DisplayMode.WEB_UI_V2
+                                                    } else {
+                                                        DisplayMode.ANDROID_UI
+                                                    }
+                                                    selectDisplayMode(next)
+                                                    Toast.makeText(
+                                                        context,
+                                                        if (next == DisplayMode.WEB_UI_V2) "WebUI V2" else "Android UI",
+                                                        Toast.LENGTH_SHORT,
+                                                    ).show()
+                                                }
+                                            },
+                                        )
+                                    },
+                            )
                         }
                     }
                 }
@@ -149,7 +154,7 @@ private fun DisplayModeChooserDialog(onSelect: (DisplayMode) -> Unit) {
             Text(
                 "Как показывать телеметрию BC-250: нативным интерфейсом Android " +
                     "или веб-панелью WebUI V2 самой платы? Выбор можно поменять позже " +
-                    "пятью быстрыми нажатиями по экрану.",
+                    "пятью быстрыми нажатиями в левом верхнем углу экрана.",
             )
         },
         confirmButton = {
