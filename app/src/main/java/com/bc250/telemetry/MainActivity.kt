@@ -1,11 +1,16 @@
 package com.bc250.telemetry
 
+import android.content.Context
 import android.os.Bundle
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,22 +22,31 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 
 // ---- Palette matching the web dashboard's dark glass-panel look ----
 private val BgColor = Color(0xFF0B0F19)
@@ -47,19 +61,104 @@ private val StatusWarning = Color(0xFFFACC15)
 private val StatusSerious = Color(0xFFFB923C)
 private val StatusCritical = Color(0xFFF87171)
 
+private const val DISPLAY_PREFS_NAME = "bc250_prefs"
+private const val PREF_DISPLAY_MODE = "display_mode"
+private const val WEB_UI_PORT = 8090
+private const val WEB_UI_V2_PATH = "/v2/"
+private const val TAP_SWITCH_WINDOW_MS = 600L
+private const val TAP_SWITCH_COUNT = 5
+
+private enum class DisplayMode(val storageValue: String) {
+    ANDROID_UI("ANDROID"),
+    WEB_UI_V2("WEB_V2"),
+}
+
+private fun displayModeFromStorage(value: String?): DisplayMode? =
+    DisplayMode.entries.firstOrNull { it.storageValue == value }
+
 class MainActivity : ComponentActivity() {
     private val viewModel: TelemetryViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
+            val context = LocalContext.current
+            val prefs = remember { context.getSharedPreferences(DISPLAY_PREFS_NAME, Context.MODE_PRIVATE) }
+            var displayMode by remember {
+                mutableStateOf(displayModeFromStorage(prefs.getString(PREF_DISPLAY_MODE, null)))
+            }
+
+            fun selectDisplayMode(mode: DisplayMode) {
+                displayMode = mode
+                prefs.edit().putString(PREF_DISPLAY_MODE, mode.storageValue).apply()
+            }
+
             MaterialTheme(colorScheme = darkColorScheme(background = BgColor)) {
                 Surface(color = BgColor, modifier = Modifier.fillMaxSize()) {
-                    HudScreen(viewModel)
+                    val mode = displayMode
+                    if (mode == null) {
+                        DisplayModeChooserDialog(onSelect = ::selectDisplayMode)
+                    } else {
+                        var tapCount by remember { mutableStateOf(0) }
+                        var lastTapAt by remember { mutableStateOf(0L) }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(Unit) {
+                                    detectTapGestures(
+                                        onTap = {
+                                            val now = System.currentTimeMillis()
+                                            tapCount = if (now - lastTapAt <= TAP_SWITCH_WINDOW_MS) tapCount + 1 else 1
+                                            lastTapAt = now
+                                            if (tapCount >= TAP_SWITCH_COUNT) {
+                                                tapCount = 0
+                                                val next = if (displayMode == DisplayMode.ANDROID_UI) {
+                                                    DisplayMode.WEB_UI_V2
+                                                } else {
+                                                    DisplayMode.ANDROID_UI
+                                                }
+                                                selectDisplayMode(next)
+                                                Toast.makeText(
+                                                    context,
+                                                    if (next == DisplayMode.WEB_UI_V2) "WebUI V2" else "Android UI",
+                                                    Toast.LENGTH_SHORT,
+                                                ).show()
+                                            }
+                                        },
+                                    )
+                                },
+                        ) {
+                            when (mode) {
+                                DisplayMode.ANDROID_UI -> HudScreen(viewModel)
+                                DisplayMode.WEB_UI_V2 -> WebUiScreen(viewModel)
+                            }
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun DisplayModeChooserDialog(onSelect: (DisplayMode) -> Unit) {
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("Режим отображения") },
+        text = {
+            Text(
+                "Как показывать телеметрию BC-250: нативным интерфейсом Android " +
+                    "или веб-панелью WebUI V2 самой платы? Выбор можно поменять позже " +
+                    "пятью быстрыми нажатиями по экрану.",
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onSelect(DisplayMode.ANDROID_UI) }) { Text("Android UI") }
+        },
+        dismissButton = {
+            TextButton(onClick = { onSelect(DisplayMode.WEB_UI_V2) }) { Text("WebUI V2") }
+        },
+    )
 }
 
 private fun statusColor(value: Double, thresholds: Triple<Double, Double, Double>): Color {
@@ -93,6 +192,35 @@ fun HudScreen(viewModel: TelemetryViewModel) {
                 TelemetryScreen(host = state.host, data = data)
             }
         }
+    }
+}
+
+/** Embeds the BC-250 board's own live "/v2/" web dashboard instead of the native Compose UI. */
+@Composable
+private fun WebUiScreen(viewModel: TelemetryViewModel) {
+    val connectionState by viewModel.connectionState.collectAsState()
+
+    when (val state = connectionState) {
+        is ConnectionState.Searching -> SearchingScreen()
+        is ConnectionState.NotFound -> NotFoundScreen(onRetry = viewModel::retry)
+        is ConnectionState.Connected -> WebUiView(host = state.host)
+    }
+}
+
+@Composable
+private fun WebUiView(host: String) {
+    key(host) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { context ->
+                WebView(context).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    webViewClient = WebViewClient()
+                    loadUrl("http://$host:$WEB_UI_PORT$WEB_UI_V2_PATH")
+                }
+            },
+        )
     }
 }
 
