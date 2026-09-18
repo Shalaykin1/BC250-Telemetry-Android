@@ -386,7 +386,7 @@ private fun MemoryChipsGrid(memory: MemoryTelemetry) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(36.dp)
+                            .height(48.dp)
                             .background(
                                 if (isHotspot) Color(0xFF3A2A1A) else Color(0xFF1A2138),
                                 RoundedCornerShape(8.dp),
@@ -403,13 +403,15 @@ private fun MemoryChipsGrid(memory: MemoryTelemetry) {
                                 "Chip ${idx + 1}",
                                 color = TextMuted,
                                 fontSize = 8.sp,
+                                lineHeight = 9.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Clip,
                             )
                             Text(
                                 chip?.let { "$it°" } ?: "—",
                                 color = chip?.let { statusColor(it.toDouble(), VrmThresh) } ?: TextMuted,
-                                fontSize = 11.sp,
+                                fontSize = 12.sp,
+                                lineHeight = 14.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Clip,
