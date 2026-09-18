@@ -2,7 +2,6 @@ package com.bc250.telemetry
 
 import android.content.Context
 import android.os.Bundle
-import android.view.GestureDetector
 import android.view.MotionEvent
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -12,7 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -68,8 +68,7 @@ private const val DISPLAY_PREFS_NAME = "bc250_prefs"
 private const val PREF_DISPLAY_MODE = "display_mode"
 private const val WEB_UI_PORT = 8090
 private const val WEB_UI_V2_PATH = "/v2/"
-private const val TAP_SWITCH_WINDOW_MS = 600L
-private const val TAP_SWITCH_COUNT = 5
+private const val SWIPE_THRESHOLD_DP = 96
 
 private enum class DisplayMode(val storageValue: String) {
     ANDROID_UI("ANDROID"),
@@ -102,44 +101,42 @@ class MainActivity : ComponentActivity() {
                     if (mode == null) {
                         DisplayModeChooserDialog(onSelect = ::selectDisplayMode)
                     } else {
-                        var tapCount by remember { mutableStateOf(0) }
-                        var lastTapAt by remember { mutableStateOf(0L) }
-
-                        fun registerQuickTap() {
-                            val now = System.currentTimeMillis()
-                            tapCount = if (now - lastTapAt <= TAP_SWITCH_WINDOW_MS) tapCount + 1 else 1
-                            lastTapAt = now
-                            if (tapCount >= TAP_SWITCH_COUNT) {
-                                tapCount = 0
-                                val next = if (displayMode == DisplayMode.ANDROID_UI) {
-                                    DisplayMode.WEB_UI_V2
-                                } else {
-                                    DisplayMode.ANDROID_UI
-                                }
-                                selectDisplayMode(next)
-                                Toast.makeText(
-                                    context,
-                                    if (next == DisplayMode.WEB_UI_V2) "WebUI V2" else "Android UI",
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                            }
-                        }
+                        val density = LocalDensity.current
+                        val swipeThresholdPx = remember(density) { with(density) { SWIPE_THRESHOLD_DP.dp.toPx() } }
 
                         when (mode) {
                             DisplayMode.ANDROID_UI -> {
-                                // No WebView here, so a screen-wide Compose tap detector works reliably.
+                                // No WebView here, so a plain Compose drag detector works reliably.
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .pointerInput(Unit) {
-                                            detectTapGestures(onTap = { registerQuickTap() })
+                                            var dragTotal = 0f
+                                            detectHorizontalDragGestures(
+                                                onDragStart = { dragTotal = 0f },
+                                                onDragEnd = {
+                                                    if (dragTotal <= -swipeThresholdPx) {
+                                                        selectDisplayMode(DisplayMode.WEB_UI_V2)
+                                                        Toast.makeText(context, "WebUI V2", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                },
+                                            ) { change, dragAmount ->
+                                                dragTotal += dragAmount
+                                                change.consume()
+                                            }
                                         },
                                 ) {
                                     HudScreen(viewModel)
                                 }
                             }
                             DisplayMode.WEB_UI_V2 -> {
-                                WebUiScreen(viewModel, onQuickTaps = ::registerQuickTap)
+                                WebUiScreen(
+                                    viewModel,
+                                    onSwipeRight = {
+                                        selectDisplayMode(DisplayMode.ANDROID_UI)
+                                        Toast.makeText(context, "Android UI", Toast.LENGTH_SHORT).show()
+                                    },
+                                )
                             }
                         }
                     }
@@ -158,7 +155,7 @@ private fun DisplayModeChooserDialog(onSelect: (DisplayMode) -> Unit) {
             Text(
                 "Как показывать телеметрию BC-250: нативным интерфейсом Android " +
                     "или веб-панелью WebUI V2 самой платы? Выбор можно поменять позже " +
-                    "пятью быстрыми нажатиями в левом верхнем углу экрана.",
+                    "свайпом влево (к WebUI V2) или вправо (назад к Android UI).",
             )
         },
         confirmButton = {
@@ -206,47 +203,45 @@ fun HudScreen(viewModel: TelemetryViewModel) {
 
 /** Embeds the BC-250 board's own live "/v2/" web dashboard instead of the native Compose UI. */
 @Composable
-private fun WebUiScreen(viewModel: TelemetryViewModel, onQuickTaps: () -> Unit) {
+private fun WebUiScreen(viewModel: TelemetryViewModel, onSwipeRight: () -> Unit) {
     val connectionState by viewModel.connectionState.collectAsState()
 
     when (val state = connectionState) {
         is ConnectionState.Searching -> SearchingScreen()
         is ConnectionState.NotFound -> NotFoundScreen(onRetry = viewModel::retry)
-        is ConnectionState.Connected -> WebUiView(host = state.host, onQuickTaps = onQuickTaps)
+        is ConnectionState.Connected -> WebUiView(host = state.host, onSwipeRight = onSwipeRight)
     }
 }
 
 @Composable
-private fun WebUiView(host: String, onQuickTaps: () -> Unit) {
+private fun WebUiView(host: String, onSwipeRight: () -> Unit) {
     key(host) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { context ->
-                // Compose overlays can't reliably sit above an interop View, so the tap counter is
-                // attached directly to the WebView via GestureDetector, which always sees its touches.
-                var tapCount = 0
-                var lastTapAt = 0L
-                val gestureDetector = GestureDetector(
-                    context,
-                    object : GestureDetector.SimpleOnGestureListener() {
-                        override fun onSingleTapUp(e: MotionEvent): Boolean {
-                            val now = System.currentTimeMillis()
-                            tapCount = if (now - lastTapAt <= TAP_SWITCH_WINDOW_MS) tapCount + 1 else 1
-                            lastTapAt = now
-                            if (tapCount >= TAP_SWITCH_COUNT) {
-                                tapCount = 0
-                                onQuickTaps()
-                            }
-                            return false
-                        }
-                    },
-                )
+                // A Compose gesture detector can't reliably sit above an interop View, so the swipe
+                // is tracked from the raw touch coordinates delivered to the WebView itself.
+                val swipeThresholdPx = SWIPE_THRESHOLD_DP * context.resources.displayMetrics.density
+                var startX = 0f
+                var startY = 0f
                 WebView(context).apply {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     webViewClient = WebViewClient()
                     setOnTouchListener { _, event ->
-                        gestureDetector.onTouchEvent(event)
+                        when (event.actionMasked) {
+                            MotionEvent.ACTION_DOWN -> {
+                                startX = event.x
+                                startY = event.y
+                            }
+                            MotionEvent.ACTION_UP -> {
+                                val dx = event.x - startX
+                                val dy = event.y - startY
+                                if (dx >= swipeThresholdPx && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.5f) {
+                                    onSwipeRight()
+                                }
+                            }
+                        }
                         false
                     }
                     loadUrl("http://$host:$WEB_UI_PORT$WEB_UI_V2_PATH")
