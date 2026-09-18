@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.BC250Telemetry" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#0B0F19</item>
+        <item name="android:windowBackground">#0B0F19</item>
+    </style>
+</resources>
