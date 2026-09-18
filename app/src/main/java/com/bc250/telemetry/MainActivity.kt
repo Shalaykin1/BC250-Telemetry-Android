@@ -2,6 +2,8 @@ package com.bc250.telemetry
 
 import android.content.Context
 import android.os.Bundle
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -102,41 +104,43 @@ class MainActivity : ComponentActivity() {
                     } else {
                         var tapCount by remember { mutableStateOf(0) }
                         var lastTapAt by remember { mutableStateOf(0L) }
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            when (mode) {
-                                DisplayMode.ANDROID_UI -> HudScreen(viewModel)
-                                DisplayMode.WEB_UI_V2 -> WebUiScreen(viewModel)
+
+                        fun registerQuickTap() {
+                            val now = System.currentTimeMillis()
+                            tapCount = if (now - lastTapAt <= TAP_SWITCH_WINDOW_MS) tapCount + 1 else 1
+                            lastTapAt = now
+                            if (tapCount >= TAP_SWITCH_COUNT) {
+                                tapCount = 0
+                                val next = if (displayMode == DisplayMode.ANDROID_UI) {
+                                    DisplayMode.WEB_UI_V2
+                                } else {
+                                    DisplayMode.ANDROID_UI
+                                }
+                                selectDisplayMode(next)
+                                Toast.makeText(
+                                    context,
+                                    if (next == DisplayMode.WEB_UI_V2) "WebUI V2" else "Android UI",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
                             }
-                            // WebView (WebUI mode) swallows touches itself, so the tap zone must be a
-                            // dedicated overlay drawn on top of it rather than a modifier on the ancestor.
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.TopStart)
-                                    .size(64.dp)
-                                    .pointerInput(Unit) {
-                                        detectTapGestures(
-                                            onTap = {
-                                                val now = System.currentTimeMillis()
-                                                tapCount = if (now - lastTapAt <= TAP_SWITCH_WINDOW_MS) tapCount + 1 else 1
-                                                lastTapAt = now
-                                                if (tapCount >= TAP_SWITCH_COUNT) {
-                                                    tapCount = 0
-                                                    val next = if (displayMode == DisplayMode.ANDROID_UI) {
-                                                        DisplayMode.WEB_UI_V2
-                                                    } else {
-                                                        DisplayMode.ANDROID_UI
-                                                    }
-                                                    selectDisplayMode(next)
-                                                    Toast.makeText(
-                                                        context,
-                                                        if (next == DisplayMode.WEB_UI_V2) "WebUI V2" else "Android UI",
-                                                        Toast.LENGTH_SHORT,
-                                                    ).show()
-                                                }
-                                            },
-                                        )
-                                    },
-                            )
+                        }
+
+                        when (mode) {
+                            DisplayMode.ANDROID_UI -> {
+                                // No WebView here, so a screen-wide Compose tap detector works reliably.
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .pointerInput(Unit) {
+                                            detectTapGestures(onTap = { registerQuickTap() })
+                                        },
+                                ) {
+                                    HudScreen(viewModel)
+                                }
+                            }
+                            DisplayMode.WEB_UI_V2 -> {
+                                WebUiScreen(viewModel, onQuickTaps = ::registerQuickTap)
+                            }
                         }
                     }
                 }
@@ -202,26 +206,49 @@ fun HudScreen(viewModel: TelemetryViewModel) {
 
 /** Embeds the BC-250 board's own live "/v2/" web dashboard instead of the native Compose UI. */
 @Composable
-private fun WebUiScreen(viewModel: TelemetryViewModel) {
+private fun WebUiScreen(viewModel: TelemetryViewModel, onQuickTaps: () -> Unit) {
     val connectionState by viewModel.connectionState.collectAsState()
 
     when (val state = connectionState) {
         is ConnectionState.Searching -> SearchingScreen()
         is ConnectionState.NotFound -> NotFoundScreen(onRetry = viewModel::retry)
-        is ConnectionState.Connected -> WebUiView(host = state.host)
+        is ConnectionState.Connected -> WebUiView(host = state.host, onQuickTaps = onQuickTaps)
     }
 }
 
 @Composable
-private fun WebUiView(host: String) {
+private fun WebUiView(host: String, onQuickTaps: () -> Unit) {
     key(host) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { context ->
+                // Compose overlays can't reliably sit above an interop View, so the tap counter is
+                // attached directly to the WebView via GestureDetector, which always sees its touches.
+                var tapCount = 0
+                var lastTapAt = 0L
+                val gestureDetector = GestureDetector(
+                    context,
+                    object : GestureDetector.SimpleOnGestureListener() {
+                        override fun onSingleTapUp(e: MotionEvent): Boolean {
+                            val now = System.currentTimeMillis()
+                            tapCount = if (now - lastTapAt <= TAP_SWITCH_WINDOW_MS) tapCount + 1 else 1
+                            lastTapAt = now
+                            if (tapCount >= TAP_SWITCH_COUNT) {
+                                tapCount = 0
+                                onQuickTaps()
+                            }
+                            return false
+                        }
+                    },
+                )
                 WebView(context).apply {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     webViewClient = WebViewClient()
+                    setOnTouchListener { _, event ->
+                        gestureDetector.onTouchEvent(event)
+                        false
+                    }
                     loadUrl("http://$host:$WEB_UI_PORT$WEB_UI_V2_PATH")
                 }
             },
