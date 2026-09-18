@@ -1,6 +1,7 @@
 package com.bc250.telemetry
 
 import android.os.Bundle
+import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -28,6 +29,9 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -47,6 +51,12 @@ private val StatusGood = Color(0xFF4ADE80)
 private val StatusWarning = Color(0xFFFACC15)
 private val StatusSerious = Color(0xFFFB923C)
 private val StatusCritical = Color(0xFFF87171)
+private const val DISPLAY_VARIANT_KEY = "display_variant"
+
+enum class DisplayVariant {
+    V1,
+    V2,
+}
 
 class MainActivity : ComponentActivity() {
     private val viewModel: TelemetryViewModel by viewModels()
@@ -54,12 +64,35 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
+            var displayVariant by remember { mutableStateOf(loadDisplayVariant()) }
             MaterialTheme(colorScheme = darkColorScheme(background = BgColor)) {
                 Surface(color = BgColor, modifier = Modifier.fillMaxSize()) {
-                    HudScreen(viewModel)
+                    HudScreen(
+                        viewModel = viewModel,
+                        displayVariant = displayVariant,
+                        onDisplayVariantChange = { variant ->
+                            displayVariant = variant
+                            saveDisplayVariant(variant)
+                        },
+                    )
                 }
             }
         }
+    }
+
+    private fun loadDisplayVariant(): DisplayVariant {
+        return if (getPreferences(Context.MODE_PRIVATE).getString(DISPLAY_VARIANT_KEY, "V1") == "V2") {
+            DisplayVariant.V2
+        } else {
+            DisplayVariant.V1
+        }
+    }
+
+    private fun saveDisplayVariant(variant: DisplayVariant) {
+        getPreferences(Context.MODE_PRIVATE)
+            .edit()
+            .putString(DISPLAY_VARIANT_KEY, variant.name)
+            .apply()
     }
 }
 
@@ -79,20 +112,61 @@ private val NvmeThresh = Triple(55.0, 65.0, 75.0)
 private val BoardThresh = Triple(45.0, 55.0, 65.0)
 
 @Composable
-fun HudScreen(viewModel: TelemetryViewModel) {
+fun HudScreen(
+    viewModel: TelemetryViewModel,
+    displayVariant: DisplayVariant = DisplayVariant.V1,
+    onDisplayVariantChange: (DisplayVariant) -> Unit = {},
+) {
     val connectionState by viewModel.connectionState.collectAsState()
     val telemetry by viewModel.telemetry.collectAsState()
 
-    when (val state = connectionState) {
-        is ConnectionState.Searching -> SearchingScreen()
-        is ConnectionState.NotFound -> NotFoundScreen(onRetry = viewModel::retry)
-        is ConnectionState.Connected -> {
-            val data = telemetry
-            if (data == null) {
-                SearchingScreen(message = "Подключено к ${state.host}, ожидание данных…")
-            } else {
-                TelemetryScreen(host = state.host, data = data)
+    Column(Modifier.fillMaxSize()) {
+        DisplayVariantSwitch(displayVariant, onDisplayVariantChange)
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            when (val state = connectionState) {
+                is ConnectionState.Searching -> SearchingScreen()
+                is ConnectionState.NotFound -> NotFoundScreen(onRetry = viewModel::retry)
+                is ConnectionState.Connected -> {
+                    val data = telemetry
+                    if (data == null) {
+                        SearchingScreen(message = "Подключено к ${state.host}, ожидание данных…")
+                    } else if (displayVariant == DisplayVariant.V2) {
+                        TelemetryScreenV2(host = state.host, data = data)
+                    } else {
+                        TelemetryScreen(host = state.host, data = data)
+                    }
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun DisplayVariantSwitch(
+    selected: DisplayVariant,
+    onChange: (DisplayVariant) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Вид", color = TextMuted, fontSize = 12.sp)
+        Spacer(Modifier.size(8.dp))
+        DisplayVariant.entries.forEach { variant ->
+            Button(
+                onClick = { onChange(variant) },
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                modifier = Modifier.height(36.dp),
+            ) {
+                Text(
+                    variant.name,
+                    fontWeight = if (variant == selected) FontWeight.Bold else FontWeight.Normal,
+                )
+            }
+            if (variant != DisplayVariant.entries.last()) Spacer(Modifier.size(6.dp))
         }
     }
 }
@@ -138,6 +212,99 @@ private fun TelemetryScreen(host: String, data: Telemetry) {
         item { OtherSensorsCard(data) }
         if (data.memory.valid) {
             item { MemoryCard(data.memory) }
+        }
+    }
+}
+
+@Composable
+private fun TelemetryScreenV2(host: String, data: Telemetry) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            HudCard {
+                Column(Modifier.padding(16.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("BC-250", color = TextMain, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                        Text("V2 · BOARD", color = AccentCpu, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Text(host, color = TextMuted, fontSize = 12.sp)
+                    Spacer(Modifier.height(12.dp))
+                    BoardDiagram(data)
+                    Spacer(Modifier.height(12.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        LabeledValue("VRM SUM", "%.1f W".format(data.totalPower), TextMain)
+                        if (data.gpuPptW >= 0) LabeledValue("APU PPT", "%.1f W".format(data.gpuPptW), TextMain)
+                    }
+                }
+            }
+        }
+        item { V2SummaryCard("CPU CORE", AccentCpu, "${data.cpuFreqMhz} MHz", data.cpuTempC, data.cpu) }
+        item { V2SummaryCard("GPU CORE", AccentGpu, "%.0f MHz".format(data.gpuSclkMhz), data.gpuTempC, data.gpu) }
+        item {
+            HudCard {
+                Column(Modifier.padding(16.dp)) {
+                    CardTitle("SYSTEM", TextMain)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        LabeledValue("FAN", "${data.fanRpm} RPM", TextMain)
+                        LabeledValue("PWM", "%.0f%%".format(data.fanPwmPct), TextMain)
+                        if (data.nvmeTempC >= 0) LabeledValue("NVMe", "%.1f°C".format(data.nvmeTempC), statusColor(data.nvmeTempC, NvmeThresh))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BoardDiagram(data: Telemetry) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(170.dp)
+            .background(Color(0xFF101A2C), RoundedCornerShape(12.dp))
+            .border(1.dp, CardBorder, RoundedCornerShape(12.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(18.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BoardZone("CPU", "${data.cpuTempC.toInt()}°C", AccentCpu, data.cpu.pout)
+            Box(Modifier.size(48.dp).border(2.dp, AccentCpu, RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                Text("BC\n250", color = TextMain, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+            BoardZone("GPU", "${data.gpuTempC.toInt()}°C", AccentGpu, data.gpu.pout)
+        }
+    }
+}
+
+@Composable
+private fun BoardZone(title: String, temperature: String, color: Color, power: Double) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(62.dp).background(color.copy(alpha = 0.18f), RoundedCornerShape(10.dp)).border(1.dp, color, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(title, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(temperature, color = TextMain, fontSize = 16.sp, fontWeight = FontWeight.Black)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text("%.1f W".format(power), color = TextMuted, fontSize = 11.sp)
+    }
+}
+
+@Composable
+private fun V2SummaryCard(title: String, accent: Color, frequency: String, temperature: Double, rail: RailTelemetry) {
+    HudCard {
+        Column(Modifier.padding(16.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                CardTitle(title, accent)
+                LabeledValue(frequency, "%.1f°C".format(temperature), statusColor(temperature, DieThresh))
+            }
+            VrmTelemetryTable(rail, vinMax = 13.0, voutMax = if (title == "CPU CORE") 1.2 else 0.9, ioutMax = if (title == "CPU CORE") 55.0 else 150.0, poutMax = if (title == "CPU CORE") 60.0 else 130.0)
         }
     }
 }
